@@ -136,7 +136,7 @@ Resources:
   TaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
-      Cpu: 512
+      Cpu: 256
       Memory: 512
       NetworkMode: awsvpc
       RequiresCompatibilities:
