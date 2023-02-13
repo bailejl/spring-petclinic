@@ -133,7 +133,6 @@ Resources:
             - !Ref Subnet1
             - !Ref Subnet2
 
-  #  Need to get this working
   TaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -152,10 +151,10 @@ Resources:
             - ContainerPort: 8080
           LogConfiguration:
             - LogDriver: awslogs
-          HealthCheck:
-            - Command: 
-              - CMD-SHELL
-              - curl -f http://localhost:8080/ || exit 1
+          # HealthCheck:
+          #   - Command:
+          #       - CMD-SHELL
+          #       - curl -f http://localhost:8080/ || exit 1
           Environment:
             - Name: Tag
               Value: !Ref Tag
