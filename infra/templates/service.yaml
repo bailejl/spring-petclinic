@@ -149,12 +149,12 @@ Resources:
           Memory: 512
           PortMappings:
             - ContainerPort: 8080
-          # LogConfiguration:
-          #   - LogDriver: awslogs
-          # HealthCheck:
-          #   - Command:
-          #       - CMD-SHELL
-          #       - curl -f http://localhost:8080/ || exit 1
+          LogConfiguration:
+            - LogDriver: awslogs
+          HealthCheck:
+            - Command:
+                - CMD-SHELL
+                - curl -f http://localhost:8080/ || exit 1
           Environment:
             - Name: Tag
               Value: !Ref Tag
