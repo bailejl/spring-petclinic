@@ -18,3 +18,5 @@ _site/
 
 *_override.tf
 tmp/
+
+.DS_Store
