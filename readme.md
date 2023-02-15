@@ -53,7 +53,7 @@ load balancer listener and listener rule.
 If you are interested in running the app locally, use the following command:
 
 ```console
-./mvnw spring-boot:run
+./mvnw spring-boot:run 
 ```
 
 ## Deploy to AWS
