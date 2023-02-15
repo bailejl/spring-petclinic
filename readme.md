@@ -1,157 +1,96 @@
-# Spring PetClinic Sample Application [![Build Status](https://github.com/spring-projects/spring-petclinic/actions/workflows/maven-build.yml/badge.svg)](https://github.com/spring-projects/spring-petclinic/actions/workflows/maven-build.yml)
+# Pet Clinic with Blue-Green Deployment
 
-[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)](https://gitpod.io/#https://github.com/spring-projects/spring-petclinic)
+This repo is a combination of the [Spring Pet Clinic repo](https://github.com/spring-projects/spring-petclinic)
+and the [AWS ECS Blue-Green Deployment repo](https://github.com/aws-samples/ecs-blue-green-deployment).
 
-## Understanding the Spring Petclinic application with a few diagrams
-<a href="https://speakerdeck.com/michaelisvy/spring-petclinic-sample-application">See the presentation here</a>
+Original readme for the pet clinic repo is [here](./docs/readme-orig.md)
 
-## Running petclinic locally
-Petclinic is a [Spring Boot](https://spring.io/guides/gs/spring-boot) application built using [Maven](https://spring.io/guides/gs/maven/) or [Gradle](https://spring.io/guides/gs/gradle/). You can build a jar file and run it from the command line (it should work just as well with Java 17 or newer):
+## Pipeline Design
 
+The intent of the design is to show off the power of blue-green deployments. As deployments to the
+non-public side can happen well in advance of a deployment to the public. Thus, testing and validation
+can be done well before the swap to public view. Meaning this can be done early in the day while people
+are around, especially if they require a late night deployment to public view. This greatly shortens the
+deployment window to the time it takes to swap ESC services from port 8080 to 80 and viceversa.
 
-```
-git clone https://github.com/spring-projects/spring-petclinic.git
-cd spring-petclinic
-./mvnw package
-java -jar target/*.jar
-```
+The pipeline consists of GitHub Actions and AWS CodePipeline. The Actions take care of the PR stage,
+which runs Spring package command. This compiles, tests and create a jar file in the target folder.
+Once the file passes it PR checks and is merged to main. Then CodePipeline will detect the change
+and start the pipeline.
 
-You can then access petclinic at http://localhost:8080/
+The CodePipeline retrieves the files from the GitHub repo. Then builds the runs the Spring package
+command again to generate the jar file. Docker build is used to create the image and place the
+jar in the image, so it executes when the container runs. The image is then placed in AWS ECR for
+later use by the ECS services.
 
-<img width="1042" alt="petclinic-screenshot" src="https://cloud.githubusercontent.com/assets/838318/19727082/2aee6d6c-9b8e-11e6-81fe-e889a5ddfded.png">
+The next stage is discovery. It identifies which ECS service is running on port 80 and 8080. This
+info is used for the deployment to the ESC service running on port 8080. In this scenario, port
+8080 is our non-public IP, while port 80 is public.
 
-Or you can run it from Maven directly using the Spring Boot Maven plugin. If you do this, it will pick up changes that you make in the project immediately (changes to Java source files require a compile as well - most people use an IDE for this):
+Once discovery is done, the next step is deploy. The new image replaces the old image in the ECS
+service connected to port 8080. Once the deployment is done, the CodePipeline waits for the user
+to approve the swap of ECS services. The service tied to port 8080 will move to port 80 and viceversa.
 
-```
+During this time the new image can be validate and tested using the EC2 Load Balancer DNS name on
+port 8080. The URL should look something like this: `http://spring-petclinic-421952290.us-east-1.elb.amazonaws.com:8080/`
+
+Once you are happy with the new image on port 8080. Then approve the swap in CodePipeline. Once
+complete, the new image will be on port 80 and the previously public image will now be on port 8080.
+This completes the flow of the pipeline.
+
+![pipeline design](./docs/assets/pipeline-design.png)
+
+## Cloud Design
+
+In the base install there is a VPC network and a CodePipeline with support resources. One support resource of unique
+note is the Lambda function use to flip the ESC services from port 8080 to 80 and viceversa. When the pipeline does a
+deployment, it creates a load balancer, a blue and green ECS services. The load balancer just has a security group as
+part of its deployment template. While the blue and green services have ECS service and support resources, but also a
+load balancer listener and listener rule.
+
+## Run the App Locally
+
+If you are interested in running the app locally, use the following command:
+
+```console
 ./mvnw spring-boot:run
 ```
 
-> NOTE: Windows users should set `git config core.autocrlf true` to avoid format assertions failing the build (use `--global` to set that flag globally).
+## Deploy to AWS
 
-> NOTE: If you prefer to use Gradle, you can build the app using `./gradlew build` and look for the jar file in `build/libs`.
+This is the condensed version, more details are [here](./infra/README.md)
 
-## Building a Container
+Prerequisites:
 
-There is no `Dockerfile` in this project. You can build a container image (if you have a docker daemon) using the Spring Boot build plugin:
+- Need to install AWS CLI
+- Recommend setting up a non-root AWS account
+  - Your CLI [configuration](http://docs.aws.amazon.com/cli/latest/userguide/cli-chap-getting-started.html) need PowerUserAccess and IAMFullAccess [IAM policies](http://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies.html) associated with your credentials
+- Login into AWS CLI
+- Create a public S3 bucket
+- Come up with a name for your CloudFormation stack
+- Need the GitHub username
+- Need a Github Token for authentication
+  - If creating a fine-grained token, it needs at a minimum:
+    - Read access to code, commit statuses, metadata, and pull requests
+- Bring up a console and make sure you are in the `infra` folder
 
-```
-./mvnw spring-boot:build-image
-```
+Run this command, when ready:
 
-## In case you find a bug/suggested improvement for Spring Petclinic
-Our issue tracker is available [here](https://github.com/spring-projects/spring-petclinic/issues)
-
-
-## Database configuration
-
-In its default configuration, Petclinic uses an in-memory database (H2) which
-gets populated at startup with data. The h2 console is exposed at `http://localhost:8080/h2-console`,
-and it is possible to inspect the content of the database using the `jdbc:h2:mem:testdb` url.
- 
-A similar setup is provided for MySQL and PostgreSQL if a persistent database configuration is needed. Note that whenever the database type changes, the app needs to run with a different profile: `spring.profiles.active=mysql` for MySQL or `spring.profiles.active=postgres` for PostgreSQL.
-
-You can start MySQL or PostgreSQL locally with whatever installer works for your OS or use docker:
-
-```
-docker run -e MYSQL_USER=petclinic -e MYSQL_PASSWORD=petclinic -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=petclinic -p 3306:3306 mysql:5.7.8
+```console
+bin/deploy
 ```
 
-or
+Here are the inputs required to launch CloudFormation templates:
 
-```
-docker run -e POSTGRES_USER=petclinic -e POSTGRES_PASSWORD=petclinic -e POSTGRES_DB=petclinic -p 5432:5432 postgres:14.1
-```
+- **S3 Bucket**: Enter S3 Bucket for storing your CloudFormation templates and scripts. This bucket must be in the same region where you wish to launch all the AWS resources created by this example.
+- **CloudFormation Stack Name**: Enter CloudFormation Stack Name to create stacks
+- **GitHubUser**: Enter your GitHub Username
+- **GitHubToken**: Enter your GitHub Token for authentication ([https://github.com/settings/tokens](https://github.com/settings/tokens))
 
-Further documentation is provided for [MySQL](https://github.com/spring-projects/spring-petclinic/blob/main/src/main/resources/db/mysql/petclinic_db_setup_mysql.txt)
-and for [PostgreSQL](https://github.com/spring-projects/spring-petclinic/blob/main/src/main/resources/db/postgres/petclinic_db_setup_postgres.txt).
+This will build the AWS Codepipeline and VPC. The rest will be built when the pipeline runs, which will be triggered by the deploy.
 
-## Compiling the CSS
+## Clean Up the Cloud
 
-There is a `petclinic.css` in `src/main/resources/static/resources/css`. It was generated from the `petclinic.scss` source, combined with the [Bootstrap](https://getbootstrap.com/) library. If you make changes to the `scss`, or upgrade Bootstrap, you will need to re-compile the CSS resources using the Maven profile "css", i.e. `./mvnw package -P css`. There is no build profile for Gradle to compile the CSS.
-
-## Working with Petclinic in your IDE
-
-### Prerequisites
-The following items should be installed in your system:
-* Java 17 or newer (full JDK, not a JRE).
-* [git command line tool](https://help.github.com/articles/set-up-git)
-* Your preferred IDE 
-  * Eclipse with the m2e plugin. Note: when m2e is available, there is an m2 icon in `Help -> About` dialog. If m2e is
-  not there, follow the install process [here](https://www.eclipse.org/m2e/)
-  * [Spring Tools Suite](https://spring.io/tools) (STS)
-  * [IntelliJ IDEA](https://www.jetbrains.com/idea/)
-  * [VS Code](https://code.visualstudio.com)
-
-### Steps:
-
-1) On the command line run:
-    ```
-    git clone https://github.com/spring-projects/spring-petclinic.git
-    ```
-2) Inside Eclipse or STS:
-    ```
-    File -> Import -> Maven -> Existing Maven project
-    ```
-
-    Then either build on the command line `./mvnw generate-resources` or use the Eclipse launcher (right click on project and `Run As -> Maven install`) to generate the css. Run the application main method by right-clicking on it and choosing `Run As -> Java Application`.
-
-3) Inside IntelliJ IDEA
-    In the main menu, choose `File -> Open` and select the Petclinic [pom.xml](pom.xml). Click on the `Open` button.
-
-    CSS files are generated from the Maven build. You can build them on the command line `./mvnw generate-resources` or right-click on the `spring-petclinic` project then `Maven -> Generates sources and Update Folders`.
-
-    A run configuration named `PetClinicApplication` should have been created for you if you're using a recent Ultimate version. Otherwise, run the application by right-clicking on the `PetClinicApplication` main class and choosing `Run 'PetClinicApplication'`.
-
-4) Navigate to Petclinic
-
-    Visit [http://localhost:8080](http://localhost:8080) in your browser.
-
-
-## Looking for something in particular?
-
-|Spring Boot Configuration | Class or Java property files  |
-|--------------------------|---|
-|The Main Class | [PetClinicApplication](https://github.com/spring-projects/spring-petclinic/blob/main/src/main/java/org/springframework/samples/petclinic/PetClinicApplication.java) |
-|Properties Files | [application.properties](https://github.com/spring-projects/spring-petclinic/blob/main/src/main/resources) |
-|Caching | [CacheConfiguration](https://github.com/spring-projects/spring-petclinic/blob/main/src/main/java/org/springframework/samples/petclinic/system/CacheConfiguration.java) |
-
-## Interesting Spring Petclinic branches and forks
-
-The Spring Petclinic "main" branch in the [spring-projects](https://github.com/spring-projects/spring-petclinic)
-GitHub org is the "canonical" implementation based on Spring Boot and Thymeleaf. There are
-[quite a few forks](https://spring-petclinic.github.io/docs/forks.html) in the GitHub org
-[spring-petclinic](https://github.com/spring-petclinic). If you are interested in using a different technology stack to implement the Pet Clinic, please join the community there.
-
-
-## Interaction with other open source projects
-
-One of the best parts about working on the Spring Petclinic application is that we have the opportunity to work in direct contact with many Open Source projects. We found bugs/suggested improvements on various topics such as Spring, Spring Data, Bean Validation and even Eclipse! In many cases, they've been fixed/implemented in just a few days.
-Here is a list of them:
-
-| Name | Issue |
-|------|-------|
-| Spring JDBC: simplify usage of NamedParameterJdbcTemplate | [SPR-10256](https://jira.springsource.org/browse/SPR-10256) and [SPR-10257](https://jira.springsource.org/browse/SPR-10257) |
-| Bean Validation / Hibernate Validator: simplify Maven dependencies and backward compatibility |[HV-790](https://hibernate.atlassian.net/browse/HV-790) and [HV-792](https://hibernate.atlassian.net/browse/HV-792) |
-| Spring Data: provide more flexibility when working with JPQL queries | [DATAJPA-292](https://jira.springsource.org/browse/DATAJPA-292) |
-
-
-# Contributing
-
-The [issue tracker](https://github.com/spring-projects/spring-petclinic/issues) is the preferred channel for bug reports, features requests and submitting pull requests.
-
-For pull requests, editor preferences are available in the [editor config](.editorconfig) for easy use in common text editors. Read more and download plugins at <https://editorconfig.org>. If you have not previously done so, please fill out and submit the [Contributor License Agreement](https://cla.pivotal.io/sign/spring).
-
-# License
-
-The Spring PetClinic sample application is released under version 2.0 of the [Apache License](https://www.apache.org/licenses/LICENSE-2.0).
-
-[spring-petclinic]: https://github.com/spring-projects/spring-petclinic
-[spring-framework-petclinic]: https://github.com/spring-petclinic/spring-framework-petclinic
-[spring-petclinic-angularjs]: https://github.com/spring-petclinic/spring-petclinic-angularjs 
-[javaconfig branch]: https://github.com/spring-petclinic/spring-framework-petclinic/tree/javaconfig
-[spring-petclinic-angular]: https://github.com/spring-petclinic/spring-petclinic-angular
-[spring-petclinic-microservices]: https://github.com/spring-petclinic/spring-petclinic-microservices
-[spring-petclinic-reactjs]: https://github.com/spring-petclinic/spring-petclinic-reactjs
-[spring-petclinic-graphql]: https://github.com/spring-petclinic/spring-petclinic-graphql
-[spring-petclinic-kotlin]: https://github.com/spring-petclinic/spring-petclinic-kotlin
-[spring-petclinic-rest]: https://github.com/spring-petclinic/spring-petclinic-rest
+Go to CloudFormation in AWS. When fully deployed, there will be two stacks. One with the name `spring-petclinic-for-fun` and
+another with the name `spring-petclinic-for-fun-DeploymentPipeline-< RANDOM STRING >-ecs-cluster`. Select both of them in them
+in the UI and click delete. This will remove all the AWS components for this demo.
